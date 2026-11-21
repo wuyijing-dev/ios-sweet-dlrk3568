@@ -1,7 +1,7 @@
 diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
 --- a/pexpert/arm/pe_serial.c
 +++ b/pexpert/arm/pe_serial.c
-@@ -145,6 +145,113 @@ fbcon_probe(void)
+@@ -145,9 +145,108 @@ fbcon_probe(void)
  	fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(reg[0], reg[1]);
  	if (fbcon_base != NULL) {
  		register_serial_functions(&sweet_fbcon_serial_functions);
@@ -115,12 +115,7 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
  	PE_parse_boot_argn("disable-uart-irq", &disable_uart_irq, sizeof(disable_uart_irq));
  
  	fbcon_probe();
-+	/*
-+	 * register_serial_functions() keeps a single console (gPESF), so probe
-+	 * the DW UART last: on dlrk3568 the CH340 serial is the debug console
-+	 * and sweet-fbcon would otherwise overwrite it.
-+	 */
-+	dlrk_uart_probe();
++	dlrk_uart_probe();	/* register_serial_functions() keeps one console: UART last */
  
  #ifdef PI3_UART
 diff --git a/pexpert/pexpert/arm/protos.h b/pexpert/pexpert/arm/protos.h
