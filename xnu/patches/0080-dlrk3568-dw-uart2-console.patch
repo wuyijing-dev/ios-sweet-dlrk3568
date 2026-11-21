@@ -1,0 +1,133 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -145,6 +145,113 @@ fbcon_probe(void)
+ 	fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(reg[0], reg[1]);
+ 	if (fbcon_base != NULL) {
+ 		register_serial_functions(&sweet_fbcon_serial_functions);
+ 	}
+ }
+ 
++/*****************************************************************************/
++
++/*
++ * dlrk3568: Synopsys DW APB UART2 @ 0xfe660000, 24 MHz / 1500000 8N1
++ * (U-Boot earlycon + shim). Registered alongside sweet-fbcon so kprintf
++ * also hits the CH340 debug UART.
++ */
++#define DLRK_UART_RBR		0x00
++#define DLRK_UART_THR		0x00
++#define DLRK_UART_DLL		0x00
++#define DLRK_UART_DLH		0x04
++#define DLRK_UART_IER		0x04
++#define DLRK_UART_FCR		0x08
++#define DLRK_UART_LCR		0x0c
++#define DLRK_UART_MCR		0x10
++#define DLRK_UART_LSR		0x14
++#define DLRK_LSR_THRE		0x20
++#define DLRK_LSR_DR		0x01
++#define DLRK_LCR_DLAB		0x80
++#define DLRK_LCR_8N1		0x03
++#define DLRK_FCR_ENABLE		0x01
++#define DLRK_FCR_RCVR_RST	0x02
++#define DLRK_FCR_XMIT_RST	0x04
++#define DLRK_MCR_DTR_RTS	0x03
++#define DLRK_UART2_PA		0xFE660000ULL
++#define DLRK_UART2_SZ		0x100ULL
++#define DLRK_UART_CLK		24000000u
++#define DLRK_UART_BAUD		1500000u
++
++static volatile uint32_t *dlrk_uart;
++
++static inline void
++dlrk_wr(uint32_t off, uint32_t v)
++{
++	dlrk_uart[off / 4] = v;
++}
++
++static inline uint32_t
++dlrk_rd(uint32_t off)
++{
++	return dlrk_uart[off / 4];
++}
++
++static void
++dlrk_uart_init(void)
++{
++	uint32_t div = (DLRK_UART_CLK + (DLRK_UART_BAUD * 8)) / (DLRK_UART_BAUD * 16);
++	dlrk_wr(DLRK_UART_IER, 0);
++	dlrk_wr(DLRK_UART_LCR, DLRK_LCR_DLAB | DLRK_LCR_8N1);
++	dlrk_wr(DLRK_UART_DLL, div & 0xff);
++	dlrk_wr(DLRK_UART_DLH, (div >> 8) & 0xff);
++	dlrk_wr(DLRK_UART_LCR, DLRK_LCR_8N1);
++	dlrk_wr(DLRK_UART_FCR, DLRK_FCR_ENABLE | DLRK_FCR_RCVR_RST | DLRK_FCR_XMIT_RST);
++	dlrk_wr(DLRK_UART_MCR, DLRK_MCR_DTR_RTS);
++}
++
++static unsigned int
++dlrk_uart_transmit_ready(void)
++{
++	return (dlrk_rd(DLRK_UART_LSR) & DLRK_LSR_THRE) != 0;
++}
++
++static void
++dlrk_uart_transmit_data(uint8_t c)
++{
++	dlrk_wr(DLRK_UART_THR, c);
++}
++
++static unsigned int
++dlrk_uart_receive_ready(void)
++{
++	return (dlrk_rd(DLRK_UART_LSR) & DLRK_LSR_DR) != 0;
++}
++
++static uint8_t
++dlrk_uart_receive_data(void)
++{
++	return (uint8_t)dlrk_rd(DLRK_UART_RBR);
++}
++
++SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) dlrk_uart_serial_functions =
++{
++	.init = dlrk_uart_init,
++	.transmit_ready = dlrk_uart_transmit_ready,
++	.transmit_data = dlrk_uart_transmit_data,
++	.receive_ready = dlrk_uart_receive_ready,
++	.receive_data = dlrk_uart_receive_data,
++	.device = SERIAL_DLRK_UART
++};
++
++static void
++dlrk_uart_probe(void)
++{
++	dlrk_uart = (volatile uint32_t *)ml_io_map(DLRK_UART2_PA, DLRK_UART2_SZ);
++	if (dlrk_uart != NULL) {
++		register_serial_functions(&dlrk_uart_serial_functions);
++	}
++}
++
+ #if HIBERNATION
+ /**
+  * Transitions the serial driver into a mode that can be run in the hibernation
+@@ -777,6 +884,7 @@ serial_init(void)
+ 
+ 	PE_parse_boot_argn("disable-uart-irq", &disable_uart_irq, sizeof(disable_uart_irq));
+ 
++	dlrk_uart_probe();
+ 	fbcon_probe();
+ 
+ #ifdef PI3_UART
+diff --git a/pexpert/pexpert/arm/protos.h b/pexpert/pexpert/arm/protos.h
+--- a/pexpert/pexpert/arm/protos.h
++++ b/pexpert/pexpert/arm/protos.h
+@@ -48,7 +48,8 @@ typedef enum serial_device {
+ 	SERIAL_PI3_UART=0x4,
+ 	SERIAL_VMAPPLE_UART=0x8,
+ 	SERIAL_DCC_UART=0x10,
+-	SERIAL_SWEET_FBCON=0x20
++	SERIAL_SWEET_FBCON=0x20,
++	SERIAL_DLRK_UART=0x40
+ } serial_device_t;
+ 
+ kern_return_t serial_irq_enable(serial_device_t device);
